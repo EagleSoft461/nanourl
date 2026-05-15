@@ -70,6 +70,24 @@ Analytics	ClickHouse
 Monitoring	Prometheus + Grafana
 Deployment	Kubernetes + Helm
 
+## Quick Test
+
+```bash
+# Health check
+curl http://localhost:3000/health
+# {"status":"ok","postgres":true,"redis":true}
+
+# Create short URL
+curl -X POST http://localhost:3000/api/v1/urls \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://example.com"}'
+# {"shortCode":"nafi1cUNP2","shortUrl":"http://localhost:3000/nafi1cUNP2"}
+
+# Redirect
+curl -v http://localhost:3000/nafi1cUNP2
+# 301 -&gt; https://example.com
+```
+
 # Documentation
 
 - Architecture Decision Records
