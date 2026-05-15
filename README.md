@@ -1,8 +1,9 @@
 ﻿# NanoURL - Distributed URL Shortener
 
-[![Build Status](https://img.shields.io/github/actions/workflow/status/yourusername/nanourl/ci.yml?branch=main&style=flat-square)](https://github.com/yourusername/nanourl/actions)
-[![Coverage](https://img.shields.io/codecov/c/github/yourusername/nanourl?style=flat-square)](https://codecov.io/gh/yourusername/nanourl)
-[![License](https://img.shields.io/github/license/yourusername/nanourl?style=flat-square&color=blue)](LICENSE)
+![License](https://img.shields.io/github/license/EagleSoft461/nanourl)
+![Last Commit](https://img.shields.io/github/last-commit/EagleSoft461/nanourl)
+![Repo Stars](https://img.shields.io/github/stars/EagleSoft461/nanourl?style=social)
+![Status](https://img.shields.io/badge/Status-Active-success)
 [![Node Version](https://img.shields.io/badge/node-20+-green?style=flat-square)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue?style=flat-square&logo=typescript)](https://typescriptlang.org)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-blue?style=flat-square&logo=postgresql)](https://postgresql.org)
