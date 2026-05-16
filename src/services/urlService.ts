@@ -1,8 +1,13 @@
 import { pgPool, redis } from '../config/database';
 import { snowflake } from '../generators/snowflake';
-import { URLEntity, CreateURLRequest, CreateURLResponse } from '../domain/url';
+import { URLEntity, CreateURLRequest, CreateURLResponse, RedirectResolution } from '../domain/url';
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
+
+interface CachedUrl {
+  originalUrl: string;
+  expiresAt: string | null;
+}
 
 export class URLService {
   async createUrl(request: CreateURLRequest): Promise<CreateURLResponse> {
@@ -26,7 +31,10 @@ export class URLService {
 
     const { created_at } = result.rows[0];
 
-    await redis.setex('url:' + shortCode, 3600, request.url);
+    await this.cacheUrl(shortCode, {
+      originalUrl: request.url,
+      expiresAt: expiresAt ? expiresAt.toISOString() : null,
+    });
 
     return {
       shortCode,
@@ -41,12 +49,18 @@ export class URLService {
   async findByShortCode(shortCode: string): Promise<URLEntity | null> {
     const cached = await redis.get('url:' + shortCode);
     if (cached) {
-      return {
-        shortCode,
-        originalUrl: cached,
-        clickCount: 0,
-        customAlias: false,
-      } as URLEntity;
+      const cachedUrl = this.parseCachedUrl(cached);
+      if (!cachedUrl) {
+        await redis.del('url:' + shortCode);
+      } else {
+        return {
+          shortCode,
+          originalUrl: cachedUrl.originalUrl,
+          expiresAt: cachedUrl.expiresAt ? new Date(cachedUrl.expiresAt) : null,
+          clickCount: 0,
+          customAlias: false,
+        } as URLEntity;
+      }
     }
 
     const result = await pgPool.query(
@@ -59,10 +73,7 @@ export class URLService {
     }
 
     const row = result.rows[0];
-    
-    await redis.setex('url:' + shortCode, 3600, row.original_url);
-
-    return {
+    const entity = {
       id: row.id,
       shortCode: row.short_code,
       originalUrl: row.original_url,
@@ -72,20 +83,71 @@ export class URLService {
       userId: row.user_id,
       customAlias: row.custom_alias,
     };
+
+    if (!entity.expiresAt || new Date(entity.expiresAt) > new Date()) {
+      await this.cacheUrl(shortCode, {
+        originalUrl: row.original_url,
+        expiresAt: row.expires_at ? row.expires_at.toISOString() : null,
+      });
+    }
+
+    return entity;
   }
 
-  async getRedirectUrl(shortCode: string): Promise<string | null> {
+  async resolveRedirect(shortCode: string): Promise<RedirectResolution> {
     const url = await this.findByShortCode(shortCode);
     
-    if (!url) return null;
+    if (!url) return { status: 'not_found' };
     
     if (url.expiresAt && new Date(url.expiresAt) < new Date()) {
-      return null;
+      await redis.del('url:' + shortCode);
+      return { status: 'expired' };
     }
 
     this.incrementClickCount(shortCode).catch(console.error);
 
-    return url.originalUrl;
+    return { status: 'found', originalUrl: url.originalUrl };
+  }
+
+  async getRedirectUrl(shortCode: string): Promise<string | null> {
+    const result = await this.resolveRedirect(shortCode);
+    return result.status === 'found' ? result.originalUrl : null;
+  }
+
+  private async cacheUrl(shortCode: string, value: CachedUrl): Promise<void> {
+    const cacheKey = 'url:' + shortCode;
+    const payload = JSON.stringify(value);
+
+    if (!value.expiresAt) {
+      await redis.setex(cacheKey, 3600, payload);
+      return;
+    }
+
+    const secondsUntilExpiry = Math.floor((new Date(value.expiresAt).getTime() - Date.now()) / 1000);
+    if (secondsUntilExpiry <= 0) {
+      await redis.del(cacheKey);
+      return;
+    }
+
+    await redis.setex(cacheKey, Math.min(3600, secondsUntilExpiry), payload);
+  }
+
+  private parseCachedUrl(cached: string): CachedUrl | null {
+    try {
+      const parsed = JSON.parse(cached) as Partial<CachedUrl>;
+      if (typeof parsed.originalUrl !== 'string') {
+        return null;
+      }
+      return {
+        originalUrl: parsed.originalUrl,
+        expiresAt: typeof parsed.expiresAt === 'string' ? parsed.expiresAt : null,
+      };
+    } catch {
+      return {
+        originalUrl: cached,
+        expiresAt: null,
+      };
+    }
   }
 
   private async incrementClickCount(shortCode: string): Promise<void> {

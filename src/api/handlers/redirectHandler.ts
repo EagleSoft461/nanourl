@@ -1,5 +1,6 @@
-﻿import { FastifyRequest, FastifyReply } from 'fastify';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { urlService } from '../../services/urlService';
+import { apiError } from '../errors';
 
 export async function redirectHandler(
   request: FastifyRequest<{ Params: { shortCode: string } }>,
@@ -7,11 +8,15 @@ export async function redirectHandler(
 ) {
   const { shortCode } = request.params;
 
-  const originalUrl = await urlService.getRedirectUrl(shortCode);
+  const result = await urlService.resolveRedirect(shortCode);
 
-  if (!originalUrl) {
-    return reply.status(404).send({ error: 'NOT_FOUND', message: 'Short URL not found or expired' });
+  if (result.status === 'not_found') {
+    return reply.status(404).send(apiError('NOT_FOUND', 'Short URL not found'));
   }
 
-  return reply.redirect(301, originalUrl);
+  if (result.status === 'expired') {
+    return reply.status(410).send(apiError('URL_EXPIRED', 'Short URL has expired'));
+  }
+
+  return reply.redirect(301, result.originalUrl);
 }

@@ -26,6 +26,11 @@ export interface CreateURLResponse {
   qrCode: string;
 }
 
+export type RedirectResolution =
+  | { status: 'found'; originalUrl: string }
+  | { status: 'not_found' }
+  | { status: 'expired' };
+
 export interface URLAnalytics {
   shortCode: string;
   totalClicks: number;
