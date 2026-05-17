@@ -1,161 +1,121 @@
-import { pgPool, redis } from '../config/database';
+import { pgPool } from '../config/database';
+import { redis } from '../config/database';
 import { snowflake } from '../generators/snowflake';
-import { URLEntity, CreateURLRequest, CreateURLResponse, RedirectResolution } from '../domain/url';
+import { CreateURLRequest, CreateURLResponse, RedirectResolution } from '../domain/url';
+import { PostgresURLRepository } from '../repositories/postgres/PostgresURLRepository';
+import { RedisCacheProvider } from '../infrastructure/cache/RedisCacheProvider';
+import { URLRepository } from '../repositories/urlRepository';
+import { CacheProvider } from '../infrastructure/cache/cacheProvider';
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 
-interface CachedUrl {
-  originalUrl: string;
-  expiresAt: string | null;
-}
-
 export class URLService {
-  async createUrl(request: CreateURLRequest): Promise<CreateURLResponse> {
-    const shortCode = request.customAlias || snowflake.generateShortCode();
-    
-    if (request.customAlias) {
-      const existing = await this.findByShortCode(shortCode);
-      if (existing) {
-        throw new Error('Custom alias already taken');
-      }
+  constructor(
+    private readonly repository: URLRepository,
+    private readonly cache: CacheProvider
+  ) {}
+
+  async createUrl(input: CreateURLRequest): Promise<CreateURLResponse> {
+    const shortCode = input.customAlias ?? snowflake.generateShortCode();
+
+    // Çakışma kontrolü — önce cache, sonra DB
+    const cacheKey = this.getCacheKey(shortCode);
+    const cached = await this.cache.get(cacheKey);
+    if (cached) {
+      throw new Error('Custom alias already taken');
     }
 
-    const expiresAt = request.expiresIn 
-      ? new Date(Date.now() + request.expiresIn * 1000)
+    const existing = await this.repository.findByShortCode(shortCode);
+    if (existing) {
+      throw new Error('Custom alias already taken');
+    }
+
+    const expiresAt = input.expiresIn
+      ? new Date(Date.now() + input.expiresIn * 1000)
       : null;
 
-    const result = await pgPool.query(
-      'INSERT INTO urls (short_code, original_url, expires_at, click_count, custom_alias) VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at',
-      [shortCode, request.url, expiresAt, 0, !!request.customAlias]
-    );
-
-    const { created_at } = result.rows[0];
-
-    await this.cacheUrl(shortCode, {
-      originalUrl: request.url,
-      expiresAt: expiresAt ? expiresAt.toISOString() : null,
+    const created = await this.repository.create({
+      originalURL: input.url,
+      shortCode,
+      expiresAt,
     });
 
-    return {
-      shortCode,
-      shortUrl: BASE_URL + '/' + shortCode,
-      originalUrl: request.url,
-      expiresAt: expiresAt ? expiresAt.toISOString() : null,
-      createdAt: created_at.toISOString(),
-      qrCode: BASE_URL + '/qr/' + shortCode,
-    };
-  }
-
-  async findByShortCode(shortCode: string): Promise<URLEntity | null> {
-    const cached = await redis.get('url:' + shortCode);
-    if (cached) {
-      const cachedUrl = this.parseCachedUrl(cached);
-      if (!cachedUrl) {
-        await redis.del('url:' + shortCode);
-      } else {
-        return {
-          shortCode,
-          originalUrl: cachedUrl.originalUrl,
-          expiresAt: cachedUrl.expiresAt ? new Date(cachedUrl.expiresAt) : null,
-          clickCount: 0,
-          customAlias: false,
-        } as URLEntity;
-      }
-    }
-
-    const result = await pgPool.query(
-      'SELECT * FROM urls WHERE short_code = $1',
-      [shortCode]
+    // Cache'e yaz
+    await this.cache.set(
+      cacheKey,
+      { originalUrl: created.originalUrl, expiresAt: created.expiresAt },
+      60 * 5
     );
 
-    if (result.rows.length === 0) {
-      return null;
-    }
-
-    const row = result.rows[0];
-    const entity = {
-      id: row.id,
-      shortCode: row.short_code,
-      originalUrl: row.original_url,
-      createdAt: row.created_at,
-      expiresAt: row.expires_at,
-      clickCount: row.click_count,
-      userId: row.user_id,
-      customAlias: row.custom_alias,
+    return {
+      shortCode: created.shortCode,
+      shortUrl: `${BASE_URL}/${created.shortCode}`,
+      originalUrl: created.originalUrl,
+      expiresAt: created.expiresAt ? created.expiresAt.toISOString() : null,
+      createdAt: created.createdAt.toISOString(),
+      qrCode: `${BASE_URL}/qr/${created.shortCode}`,
     };
-
-    if (!entity.expiresAt || new Date(entity.expiresAt) > new Date()) {
-      await this.cacheUrl(shortCode, {
-        originalUrl: row.original_url,
-        expiresAt: row.expires_at ? row.expires_at.toISOString() : null,
-      });
-    }
-
-    return entity;
   }
 
   async resolveRedirect(shortCode: string): Promise<RedirectResolution> {
-    const url = await this.findByShortCode(shortCode);
-    
-    if (!url) return { status: 'not_found' };
-    
-    if (url.expiresAt && new Date(url.expiresAt) < new Date()) {
-      await redis.del('url:' + shortCode);
+    const cacheKey = this.getCacheKey(shortCode);
+
+    // 1. Cache kontrolü
+    const cached = await this.cache.get<{ originalUrl: string; expiresAt: string | null }>(cacheKey);
+    if (cached) {
+      if (this.isExpired(cached.expiresAt ? new Date(cached.expiresAt) : null)) {
+        await this.cache.del(cacheKey);
+        return { status: 'expired' };
+      }
+      return { status: 'found', originalUrl: cached.originalUrl };
+    }
+
+    // 2. DB lookup
+    const url = await this.repository.findByShortCode(shortCode);
+    if (!url) {
+      return { status: 'not_found' };
+    }
+
+    // 3. Expiry kontrolü
+    if (this.isExpired(url.expiresAt ?? null)) {
+      await this.cache.del(cacheKey);
       return { status: 'expired' };
     }
 
-    this.incrementClickCount(shortCode).catch(console.error);
+    // 4. Cache'e yaz
+    const ttlSeconds = url.expiresAt
+      ? Math.floor((url.expiresAt.getTime() - Date.now()) / 1000)
+      : 60 * 60;
+
+    await this.cache.set(
+      cacheKey,
+      { originalUrl: url.originalUrl, expiresAt: url.expiresAt?.toISOString() ?? null },
+      ttlSeconds
+    );
+
+    // 5. Click sayacını async artır (fire and forget)
+    this.repository.incrementClickCount(shortCode).catch(() => {});
 
     return { status: 'found', originalUrl: url.originalUrl };
   }
 
-  async getRedirectUrl(shortCode: string): Promise<string | null> {
-    const result = await this.resolveRedirect(shortCode);
-    return result.status === 'found' ? result.originalUrl : null;
+  async deleteUrl(shortCode: string): Promise<void> {
+    await this.repository.delete(shortCode);
+    await this.cache.del(this.getCacheKey(shortCode));
   }
 
-  private async cacheUrl(shortCode: string, value: CachedUrl): Promise<void> {
-    const cacheKey = 'url:' + shortCode;
-    const payload = JSON.stringify(value);
-
-    if (!value.expiresAt) {
-      await redis.setex(cacheKey, 3600, payload);
-      return;
-    }
-
-    const secondsUntilExpiry = Math.floor((new Date(value.expiresAt).getTime() - Date.now()) / 1000);
-    if (secondsUntilExpiry <= 0) {
-      await redis.del(cacheKey);
-      return;
-    }
-
-    await redis.setex(cacheKey, Math.min(3600, secondsUntilExpiry), payload);
+  private getCacheKey(shortCode: string): string {
+    return `url:${shortCode}`;
   }
 
-  private parseCachedUrl(cached: string): CachedUrl | null {
-    try {
-      const parsed = JSON.parse(cached) as Partial<CachedUrl>;
-      if (typeof parsed.originalUrl !== 'string') {
-        return null;
-      }
-      return {
-        originalUrl: parsed.originalUrl,
-        expiresAt: typeof parsed.expiresAt === 'string' ? parsed.expiresAt : null,
-      };
-    } catch {
-      return {
-        originalUrl: cached,
-        expiresAt: null,
-      };
-    }
-  }
-
-  private async incrementClickCount(shortCode: string): Promise<void> {
-    await pgPool.query(
-      'UPDATE urls SET click_count = click_count + 1 WHERE short_code = $1',
-      [shortCode]
-    );
+  private isExpired(expiresAt: Date | null): boolean {
+    if (!expiresAt) return false;
+    return new Date(expiresAt).getTime() < Date.now();
   }
 }
 
-export const urlService = new URLService();
+// Singleton — production'da gerçek bağımlılıklarla initialize edilir
+export const urlService = new URLService(
+  new PostgresURLRepository(pgPool),
+  new RedisCacheProvider(redis)
+);

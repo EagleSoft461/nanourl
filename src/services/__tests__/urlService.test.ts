@@ -26,99 +26,103 @@ vi.mock('../../generators/snowflake', () => ({
 }));
 
 import { URLService } from '../urlService';
+import { URLRepository, URLRecord, CreateURLDTO } from '../../repositories/urlRepository';
+import { CacheProvider } from '../../infrastructure/cache/cacheProvider';
+
+// Test için minimal mock repository
+function makeMockRepository(): URLRepository {
+  return {
+    create: vi.fn(),
+    findByShortCode: vi.fn(),
+    incrementClickCount: vi.fn(),
+    delete: vi.fn(),
+  };
+}
+
+// Test için minimal mock cache
+function makeMockCache(): CacheProvider {
+  return {
+    get: vi.fn(),
+    set: vi.fn(),
+    del: vi.fn(),
+  };
+}
 
 describe('URLService', () => {
   let service: URLService;
+  let mockRepo: ReturnType<typeof makeMockRepository>;
+  let mockCache: ReturnType<typeof makeMockCache>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    service = new URLService();
-    mocks.redisSetex.mockResolvedValue('OK');
-    mocks.redisDel.mockResolvedValue(1);
+    mockRepo = makeMockRepository();
+    mockCache = makeMockCache();
+    service = new URLService(mockRepo, mockCache);
   });
 
   it('returns not_found when a short code does not exist', async () => {
-    mocks.redisGet.mockResolvedValue(null);
-    mocks.pgQuery.mockResolvedValue({ rows: [] });
+    vi.mocked(mockCache.get).mockResolvedValue(null);
+    vi.mocked(mockRepo.findByShortCode).mockResolvedValue(null);
 
     const result = await service.resolveRedirect('missing1');
 
     expect(result).toEqual({ status: 'not_found' });
-    expect(mocks.pgQuery).toHaveBeenCalledWith(
-      'SELECT * FROM urls WHERE short_code = $1',
-      ['missing1']
-    );
+    expect(mockRepo.findByShortCode).toHaveBeenCalledWith('missing1');
   });
 
   it('returns expired and clears cache for expired database records', async () => {
     const expiredAt = new Date(Date.now() - 1000);
-    mocks.redisGet.mockResolvedValue(null);
-    mocks.pgQuery.mockResolvedValueOnce({
-      rows: [
-        {
-          id: 1,
-          short_code: 'expired1',
-          original_url: 'https://example.com',
-          created_at: new Date(),
-          expires_at: expiredAt,
-          click_count: 0,
-          user_id: null,
-          custom_alias: false,
-        },
-      ],
+    vi.mocked(mockCache.get).mockResolvedValue(null);
+    vi.mocked(mockRepo.findByShortCode).mockResolvedValue({
+      id: '1',
+      shortCode: 'expired1',
+      originalUrl: 'https://example.com',
+      createdAt: new Date(),
+      expiresAt: expiredAt,
+      clickCount: 0,
     });
 
     const result = await service.resolveRedirect('expired1');
 
     expect(result).toEqual({ status: 'expired' });
-    expect(mocks.redisDel).toHaveBeenCalledWith('url:expired1');
-    expect(mocks.redisSetex).not.toHaveBeenCalled();
-    expect(mocks.pgQuery).toHaveBeenCalledTimes(1);
+    expect(mockCache.del).toHaveBeenCalledWith('url:expired1');
+    expect(mockCache.set).not.toHaveBeenCalled();
+    expect(mockRepo.findByShortCode).toHaveBeenCalledTimes(1);
   });
 
   it('returns found, increments clicks, and caches valid database records', async () => {
     const expiresAt = new Date(Date.now() + 120_000);
-    mocks.redisGet.mockResolvedValue(null);
-    mocks.pgQuery
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            id: 1,
-            short_code: 'valid1',
-            original_url: 'https://example.com',
-            created_at: new Date(),
-            expires_at: expiresAt,
-            click_count: 2,
-            user_id: null,
-            custom_alias: false,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rowCount: 1 });
+    vi.mocked(mockCache.get).mockResolvedValue(null);
+    vi.mocked(mockRepo.findByShortCode).mockResolvedValue({
+      id: '1',
+      shortCode: 'valid1',
+      originalUrl: 'https://example.com',
+      createdAt: new Date(),
+      expiresAt,
+      clickCount: 2,
+    });
+    vi.mocked(mockRepo.incrementClickCount).mockResolvedValue(undefined);
+    vi.mocked(mockCache.set).mockResolvedValue(undefined);
 
     const result = await service.resolveRedirect('valid1');
+
     await vi.waitFor(() => {
-      expect(mocks.pgQuery).toHaveBeenCalledWith(
-        'UPDATE urls SET click_count = click_count + 1 WHERE short_code = $1',
-        ['valid1']
-      );
+      expect(mockRepo.incrementClickCount).toHaveBeenCalledWith('valid1');
     });
 
     expect(result).toEqual({ status: 'found', originalUrl: 'https://example.com' });
-    expect(mocks.redisSetex).toHaveBeenCalledWith(
+    expect(mockCache.set).toHaveBeenCalledWith(
       'url:valid1',
-      expect.any(Number),
-      expect.stringContaining('"originalUrl":"https://example.com"')
+      expect.objectContaining({ originalUrl: 'https://example.com' }),
+      expect.any(Number)
     );
   });
 
   it('detects duplicate custom aliases before insert', async () => {
-    mocks.redisGet.mockResolvedValue(
-      JSON.stringify({
-        originalUrl: 'https://existing.example.com',
-        expiresAt: null,
-      })
-    );
+    vi.mocked(mockCache.get).mockResolvedValue({
+      originalUrl: 'https://existing.example.com',
+      expiresAt: null,
+    });
 
     await expect(
       service.createUrl({
@@ -127,24 +131,19 @@ describe('URLService', () => {
       })
     ).rejects.toThrow('Custom alias already taken');
 
-    expect(mocks.pgQuery).not.toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO urls'),
-      expect.any(Array)
-    );
+    expect(mockRepo.create).not.toHaveBeenCalled();
   });
 
   it('uses cached expiry metadata when resolving redirects', async () => {
-    mocks.redisGet.mockResolvedValue(
-      JSON.stringify({
-        originalUrl: 'https://example.com',
-        expiresAt: new Date(Date.now() - 1000).toISOString(),
-      })
-    );
+    vi.mocked(mockCache.get).mockResolvedValue({
+      originalUrl: 'https://example.com',
+      expiresAt: new Date(Date.now() - 1000).toISOString(),
+    });
 
     const result = await service.resolveRedirect('cachedExpired1');
 
     expect(result).toEqual({ status: 'expired' });
-    expect(mocks.pgQuery).not.toHaveBeenCalled();
-    expect(mocks.redisDel).toHaveBeenCalledWith('url:cachedExpired1');
+    expect(mockRepo.findByShortCode).not.toHaveBeenCalled();
+    expect(mockCache.del).toHaveBeenCalledWith('url:cachedExpired1');
   });
 });
