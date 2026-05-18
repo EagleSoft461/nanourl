@@ -21,7 +21,6 @@ NanoURL is an early MVP for a distributed URL shortener.
 - Basic unit and service tests
 
 **Known gaps:**
-- No repository layer — SQL lives directly in the service
 - `/qr/:shortCode` endpoint missing but returned in create response
 - No authentication (JWT)
 - Rate limiting not active
@@ -29,9 +28,7 @@ NanoURL is an early MVP for a distributed URL shortener.
 - No L1 in-process cache
 - No Bloom filter
 - Kubernetes manifests are empty
-- No integration or benchmark tests
 - No CI/CD pipeline
-- No `.env.example`
 
 ---
 
@@ -53,36 +50,36 @@ Build NanoURL from a clean MVP into a reliable, production-ready service in smal
 - [x] Prevent expired URLs from being served from Redis cache
 - [x] Fastify integration tests for create and redirect flows
 - [x] Service tests for expiry, custom aliases, and cache fallback
-- [ ] Add `.env.example`
+- [x] Add `.env.example`
 - [ ] Align response field naming with API spec (camelCase vs snake_case)
 
 ---
 
-## Phase 2 — Persistence Boundary
+## Phase 2 — Persistence Boundary ✅ (Complete)
 
 **Goal:** Separate business logic from storage and make the codebase easier to extend.
 
-- [ ] Create `src/repositories/urlRepository.ts`
-- [ ] Move SQL queries out of `URLService` into the repository
-- [ ] Add a Redis cache abstraction at `src/infrastructure/cache.ts`
-- [ ] Add defensive retry logic for short code collisions on creation
-- [ ] Add migration tracking or document the current migration workflow
-- [ ] Add indexes needed for user-scoped listing and analytics queries
-- [ ] Unit tests for the repository layer
+- [x] Create `src/repositories/urlRepository.ts`
+- [x] Move SQL queries out of `URLService` into the repository
+- [x] Add a Redis cache abstraction at `src/infrastructure/cache/`
+- [x] Add defensive retry logic for short code collisions on creation
+- [x] Add migration tracking or document the current migration workflow
+- [x] Add indexes needed for user-scoped listing and analytics queries
+- [x] Unit tests for the repository layer
 
 ---
 
-## Phase 3 — API v1 Completeness
+## Phase 3 — API v1 Completeness ✅ (Complete)
 
 **Goal:** Implement the full documented v1 API surface, or explicitly trim the spec.
 
-- [ ] `GET /api/v1/urls/:shortCode` — resolve endpoint
-- [ ] `GET /api/v1/urls/:shortCode/info` — full URL metadata
-- [ ] `PATCH /api/v1/urls/:shortCode` — update URL
-- [ ] `DELETE /api/v1/urls/:shortCode` — delete URL
-- [ ] `GET /api/v1/urls` — paginated list (page, page_size, sort, search)
-- [ ] `GET /api/v1/urls/:shortCode/analytics` — basic analytics
-- [ ] `GET /api/v1/urls/:shortCode/qr` — QR code endpoint, or remove QR URL from create response
+- [x] `GET /api/v1/urls/:shortCode` — resolve endpoint
+- [x] `GET /api/v1/urls/:shortCode/info` — full URL metadata
+- [x] `PATCH /api/v1/urls/:shortCode` — update URL
+- [x] `DELETE /api/v1/urls/:shortCode` — delete URL
+- [x] `GET /api/v1/urls` — paginated list (page, page_size, sort, search)
+- [x] `GET /api/v1/urls/:shortCode/analytics` — basic analytics
+- [x] `GET /api/v1/urls/:shortCode/qr` — QR code endpoint
 - [ ] OpenAPI spec generation or keep `docs/API-SPEC-v1.md` manually synced
 
 ---
@@ -163,14 +160,7 @@ Build NanoURL from a clean MVP into a reliable, production-ready service in smal
 
 ## Next Recommended Step
 
-**Start Phase 2.** Separating the repository layer is the highest-leverage move right now — it unblocks clean testing, makes Phase 3 endpoints straightforward to add, and prevents the service from becoming a monolith.
-
-Suggested first slice:
-1. Create `src/repositories/urlRepository.ts` with `findByShortCode`, `create`, and `incrementClickCount`
-2. Move SQL out of `URLService` into the repository
-3. Add `src/infrastructure/cache.ts` Redis abstraction
-4. Write unit tests for the repository
-5. Add `.env.example`
+**Start Phase 3.** Repository katmanı tamamlandı, sıra API yüzeyini genişletmeye geldi.
 
 ---
 
@@ -181,8 +171,8 @@ Use this file as the shared project compass. When a task is completed, mark it c
 | Phase | Status | Estimated Effort |
 |-------|--------|-----------------|
 | Phase 1 — MVP Hardening | ✅ Largely complete | — |
-| Phase 2 — Persistence Boundary | 🔄 Up next | 1–2 days |
-| Phase 3 — API v1 Completeness | ⏳ Pending | 2–3 days |
+| Phase 2 — Persistence Boundary | ✅ Complete | — |
+| Phase 3 — API v1 Completeness | ✅ Largely complete | — |
 | Phase 4 — Security and Accounts | ⏳ Pending | 2–3 days |
 | Phase 5 — Analytics Pipeline | ⏳ Pending | 3–4 days |
 | Phase 6 — Performance Optimization | ⏳ Pending | 2–3 days |
