@@ -35,10 +35,10 @@ export class PostgresURLRepository implements URLRepository {
 
   async create(data: CreateURLDTO): Promise<URLRecord> {
     const result = await this.pool.query(
-      `INSERT INTO urls (short_code, original_url, expires_at)
-       VALUES ($1, $2, $3)
-       RETURNING id, short_code, original_url, click_count, created_at, expires_at`,
-      [data.shortCode, data.originalURL, data.expiresAt ?? null]
+      `INSERT INTO urls (short_code, original_url, expires_at, user_id)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, short_code, original_url, click_count, created_at, expires_at, user_id`,
+      [data.shortCode, data.originalURL, data.expiresAt ?? null, data.userId ?? null]
     );
     return rowToRecord(result.rows[0]);
   }

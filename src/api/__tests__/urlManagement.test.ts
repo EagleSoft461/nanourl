@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   listUrls: vi.fn(),
   checkHealth: vi.fn(),
   qrToBuffer: vi.fn(),
+  verifyAccessToken: vi.fn(),
 }));
 
 vi.mock('../../services/urlService', () => ({
@@ -27,6 +28,10 @@ vi.mock('../../config/database', () => ({
   checkHealth: mocks.checkHealth,
   pgPool: {},
   redis: { on: vi.fn() },
+}));
+
+vi.mock('../../services/authService', () => ({
+  authService: { verifyAccessToken: mocks.verifyAccessToken },
 }));
 
 // qrcode kütüphanesini mock'la — gerçek PNG üretmeye gerek yok
@@ -49,9 +54,11 @@ describe('URL Management routes', () => {
     Object.values(mocks).forEach((m) => m.mockReset());
     mocks.checkHealth.mockResolvedValue({ postgres: true, redis: true });
     mocks.qrToBuffer.mockResolvedValue(Buffer.from('fake-png'));
+    // PATCH ve DELETE artık auth gerektiriyor — testlerde geçerli token simüle et
+    mocks.verifyAccessToken.mockReturnValue({ sub: 'user-1', email: 'test@example.com' });
   });
 
-  afterEach(() => vi.clearAllMocks());
+  afterEach(() => { vi.clearAllMocks(); });
 
   // ── GET /api/v1/urls ──────────────────────────────────────────────────────
 
@@ -152,6 +159,7 @@ describe('URL Management routes', () => {
       const res = await app.inject({
         method: 'PATCH',
         url: '/api/v1/urls/abc123',
+        headers: { authorization: 'Bearer valid.token' },
         payload: { url: 'https://updated.com' },
       });
       await app.close();
@@ -166,6 +174,7 @@ describe('URL Management routes', () => {
       const res = await app.inject({
         method: 'PATCH',
         url: '/api/v1/urls/abc123',
+        headers: { authorization: 'Bearer valid.token' },
         payload: { url: 'not-a-url' },
       });
       await app.close();
@@ -181,6 +190,7 @@ describe('URL Management routes', () => {
       const res = await app.inject({
         method: 'PATCH',
         url: '/api/v1/urls/missing1',
+        headers: { authorization: 'Bearer valid.token' },
         payload: { url: 'https://example.com' },
       });
       await app.close();
@@ -197,7 +207,11 @@ describe('URL Management routes', () => {
       mocks.getInfo.mockResolvedValue(BASE_RECORD);
       mocks.deleteUrl.mockResolvedValue(undefined);
 
-      const res = await app.inject({ method: 'DELETE', url: '/api/v1/urls/abc123' });
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/v1/urls/abc123',
+        headers: { authorization: 'Bearer valid.token' },
+      });
       await app.close();
 
       expect(res.statusCode).toBe(204);
@@ -208,7 +222,11 @@ describe('URL Management routes', () => {
       const app = buildApp();
       mocks.getInfo.mockResolvedValue(null);
 
-      const res = await app.inject({ method: 'DELETE', url: '/api/v1/urls/missing1' });
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/v1/urls/missing1',
+        headers: { authorization: 'Bearer valid.token' },
+      });
       await app.close();
 
       expect(res.statusCode).toBe(404);

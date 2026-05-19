@@ -84,18 +84,18 @@ Build NanoURL from a clean MVP into a reliable, production-ready service in smal
 
 ---
 
-## Phase 4 — Security and Accounts
+## Phase 4 — Security and Accounts ✅ (Complete)
 
 **Goal:** Make public URL creation safer and add user ownership.
 
-- [ ] Enable `@fastify/rate-limit`
-- [ ] Anonymous and authenticated rate limit tiers (per API spec)
-- [ ] Request IDs and structured log format
-- [ ] JWT authentication (RS256, 1h access token + 30d refresh token)
-- [ ] User ownership tied to URLs
+- [x] Enable `@fastify/rate-limit`
+- [x] Anonymous and authenticated rate limit tiers (per API spec)
+- [x] Request IDs and structured log format
+- [x] JWT authentication (RS256, 1h access token + 30d refresh token)
+- [x] User ownership tied to URLs
+- [x] URL safety checks: unsupported protocols, local/private network targets
+- [x] Tests for auth middleware
 - [ ] Password-protected redirects (optional, depending on product scope)
-- [ ] URL safety checks: unsupported protocols, local/private network targets
-- [ ] Tests for auth middleware
 
 ---
 
@@ -173,7 +173,7 @@ Use this file as the shared project compass. When a task is completed, mark it c
 | Phase 1 — MVP Hardening | ✅ Largely complete | — |
 | Phase 2 — Persistence Boundary | ✅ Complete | — |
 | Phase 3 — API v1 Completeness | ✅ Largely complete | — |
-| Phase 4 — Security and Accounts | ⏳ Pending | 2–3 days |
+| Phase 4 — Security and Accounts | ✅ Largely complete | — |
 | Phase 5 — Analytics Pipeline | ⏳ Pending | 3–4 days |
 | Phase 6 — Performance Optimization | ⏳ Pending | 2–3 days |
 | Phase 7 — Operational Readiness | ⏳ Pending | 2–3 days |

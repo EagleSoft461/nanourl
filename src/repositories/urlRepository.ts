@@ -2,6 +2,7 @@ export interface CreateURLDTO {
   originalURL: string;
   shortCode: string;
   expiresAt?: Date | null;
+  userId?: string | null;
 }
 
 export interface UpdateURLDTO {

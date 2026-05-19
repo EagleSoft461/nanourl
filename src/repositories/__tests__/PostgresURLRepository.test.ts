@@ -69,7 +69,7 @@ describe('PostgresURLRepository', () => {
       // SQL doğru mu?
       expect(mockQuery).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO urls'),
-        ['abc123', 'https://example.com', expires]
+        ['abc123', 'https://example.com', expires, null]
       );
 
       // snake_case → camelCase dönüşümü doğru mu?
@@ -106,7 +106,7 @@ describe('PostgresURLRepository', () => {
       // null expiry DB'ye null olarak gitmeli
       expect(mockQuery).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO urls'),
-        ['noexp1', 'https://example.com', null]
+        ['noexp1', 'https://example.com', null, null]
       );
       expect(result.expiresAt).toBeNull();
     });

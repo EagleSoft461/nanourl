@@ -75,6 +75,7 @@ export class URLService {
       originalURL: input.url,
       shortCode,
       expiresAt,
+      userId: input.userId ?? null,
     });
 
     // Yeni kaydı cache'e yaz (5 dakika TTL)

@@ -15,6 +15,7 @@ export interface CreateURLRequest {
   expiresIn?: number;
   password?: string;
   utmSource?: string;
+  userId?: string;  // Auth varsa set edilir, yoksa undefined
 }
 
 export interface CreateURLResponse {
