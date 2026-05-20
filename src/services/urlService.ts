@@ -5,6 +5,8 @@ import { PostgresURLRepository } from '../repositories/postgres/PostgresURLRepos
 import { RedisCacheProvider } from '../infrastructure/cache/RedisCacheProvider';
 import { URLRepository, URLRecord, ListURLsOptions, PaginatedResult } from '../repositories/urlRepository';
 import { CacheProvider } from '../infrastructure/cache/cacheProvider';
+import { eventProducer } from '../infrastructure/kafka/kafkaProducer';
+import { createUrlCreatedEvent, createUrlExpiredEvent } from '../infrastructure/events/eventSchema';
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 
@@ -85,7 +87,7 @@ export class URLService {
       60 * 5
     );
 
-    return {
+    const response: CreateURLResponse = {
       shortCode: created.shortCode,
       shortUrl: `${BASE_URL}/${created.shortCode}`,
       originalUrl: created.originalUrl,
@@ -93,6 +95,20 @@ export class URLService {
       createdAt: created.createdAt.toISOString(),
       qrCode: `${BASE_URL}/qr/${created.shortCode}`,
     };
+
+    // url.created event'ini async yayınla (fire and forget)
+    eventProducer
+      .publish(
+        createUrlCreatedEvent({
+          shortCode: created.shortCode,
+          originalUrl: created.originalUrl,
+          userId: input.userId ?? null,
+          expiresAt: created.expiresAt?.toISOString() ?? null,
+        })
+      )
+      .catch(() => {}); // Kafka hatası URL oluşturmayı durdurmamalı
+
+    return response;
   }
 
   async resolveRedirect(shortCode: string): Promise<RedirectResolution> {
@@ -118,6 +134,17 @@ export class URLService {
     // 3. Expiry kontrolü
     if (this.isExpired(url.expiresAt ?? null)) {
       await this.cache.del(cacheKey);
+
+      // url.expired event'ini async yayınla
+      eventProducer
+        .publish(
+          createUrlExpiredEvent({
+            shortCode,
+            expiredAt: url.expiresAt!.toISOString(),
+          })
+        )
+        .catch(() => {});
+
       return { status: 'expired' };
     }
 

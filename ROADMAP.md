@@ -99,18 +99,18 @@ Build NanoURL from a clean MVP into a reliable, production-ready service in smal
 
 ---
 
-## Phase 5 — Analytics Pipeline
+## Phase 5 — Analytics Pipeline ✅ (Complete)
 
 **Goal:** Collect redirect events without slowing down the redirect path.
 
-- [ ] Emit redirect events asynchronously
-- [ ] `src/infrastructure/kafka.ts` — Kafka producer abstraction
-- [ ] Define click event schema
-- [ ] `src/workers/analyticsWorker.ts` — analytics consumer
-- [ ] Decide whether ClickHouse is required now or later
-- [ ] Implement aggregate analytics endpoint
-- [ ] Integration tests around event emission boundaries
-- [ ] `url.created`, `url.accessed`, `url.expired` Kafka topics
+- [x] Emit redirect events asynchronously
+- [x] `src/infrastructure/kafka/kafkaProducer.ts` — Kafka producer abstraction
+- [x] Define click event schema (`src/infrastructure/events/eventSchema.ts`)
+- [x] `src/workers/analyticsWorker.ts` — analytics consumer
+- [x] ClickHouse deferred — PostgreSQL sufficient for current scale
+- [x] Analytics endpoint returns click_count (full breakdown in Phase 6)
+- [x] Integration tests around event emission boundaries
+- [x] `url.created`, `url.accessed`, `url.expired` Kafka topics
 
 ---
 
@@ -174,7 +174,7 @@ Use this file as the shared project compass. When a task is completed, mark it c
 | Phase 2 — Persistence Boundary | ✅ Complete | — |
 | Phase 3 — API v1 Completeness | ✅ Largely complete | — |
 | Phase 4 — Security and Accounts | ✅ Largely complete | — |
-| Phase 5 — Analytics Pipeline | ⏳ Pending | 3–4 days |
+| Phase 5 — Analytics Pipeline | ✅ Complete | — |
 | Phase 6 — Performance Optimization | ⏳ Pending | 2–3 days |
 | Phase 7 — Operational Readiness | ⏳ Pending | 2–3 days |
 | Phase 8 — Database Sharding | ⏳ Advanced | 5–7 days |
