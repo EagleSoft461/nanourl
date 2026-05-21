@@ -7,6 +7,9 @@ import { URLRepository, URLRecord, ListURLsOptions, PaginatedResult } from '../r
 import { CacheProvider } from '../infrastructure/cache/cacheProvider';
 import { eventProducer } from '../infrastructure/kafka/kafkaProducer';
 import { createUrlCreatedEvent, createUrlExpiredEvent } from '../infrastructure/events/eventSchema';
+import { LRUCache, urlL1Cache } from '../infrastructure/cache/localCache';
+import { BloomFilter, urlBloomFilter } from '../infrastructure/cache/bloomFilter';
+import { publishCacheInvalidation } from '../infrastructure/cache/cacheWarming';
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 
@@ -16,7 +19,10 @@ const MAX_RETRIES = 3;
 export class URLService {
   constructor(
     private readonly repository: URLRepository,
-    private readonly cache: CacheProvider
+    private readonly cache: CacheProvider,
+    // L1 ve Bloom filter inject edilebilir — test'te mock kullanılabilir
+    private readonly l1Cache: LRUCache<{ originalUrl: string; expiresAt: string | null }> = urlL1Cache,
+    private readonly bloomFilter: BloomFilter = urlBloomFilter
   ) {}
 
   async createUrl(input: CreateURLRequest): Promise<CreateURLResponse> {
@@ -81,11 +87,13 @@ export class URLService {
     });
 
     // Yeni kaydı cache'e yaz (5 dakika TTL)
-    await this.cache.set(
-      cacheKey,
-      { originalUrl: created.originalUrl, expiresAt: created.expiresAt?.toISOString() ?? null },
-      60 * 5
-    );
+    const cacheValue = {
+      originalUrl: created.originalUrl,
+      expiresAt: created.expiresAt?.toISOString() ?? null,
+    };
+    await this.cache.set(cacheKey, cacheValue, 60 * 5);
+    this.l1Cache.set(cacheKey, cacheValue);
+    this.bloomFilter.add(shortCode);
 
     const response: CreateURLResponse = {
       shortCode: created.shortCode,
@@ -114,28 +122,44 @@ export class URLService {
   async resolveRedirect(shortCode: string): Promise<RedirectResolution> {
     const cacheKey = this.getCacheKey(shortCode);
 
-    // 1. Cache kontrolü (Redis)
-    // Neden önce cache? DB'ye gitmeden önce hızlı cevap vermek için.
+    // 1. L1 cache (in-process bellek) — en hızlı yol, ~0.01ms
+    const l1Hit = this.l1Cache.get(cacheKey);
+    if (l1Hit) {
+      if (this.isExpired(l1Hit.expiresAt ? new Date(l1Hit.expiresAt) : null)) {
+        this.l1Cache.delete(cacheKey);
+        return { status: 'expired' };
+      }
+      return { status: 'found', originalUrl: l1Hit.originalUrl };
+    }
+
+    // 2. Bloom filter — "kesinlikle yok" ise DB'ye gitme
+    if (!this.bloomFilter.mightContain(shortCode)) {
+      return { status: 'not_found' };
+    }
+
+    // 3. L2 cache (Redis) — ~1-2ms
     const cached = await this.cache.get<{ originalUrl: string; expiresAt: string | null }>(cacheKey);
     if (cached) {
       if (this.isExpired(cached.expiresAt ? new Date(cached.expiresAt) : null)) {
-        await this.cache.del(cacheKey); // Süresi dolmuş kaydı cache'den temizle
+        await this.cache.del(cacheKey);
+        this.l1Cache.delete(cacheKey);
         return { status: 'expired' };
       }
+      this.l1Cache.set(cacheKey, cached);
       return { status: 'found', originalUrl: cached.originalUrl };
     }
 
-    // 2. DB lookup
+    // 4. DB lookup — ~5-10ms (son çare)
     const url = await this.repository.findByShortCode(shortCode);
     if (!url) {
       return { status: 'not_found' };
     }
 
-    // 3. Expiry kontrolü
+    // 5. Expiry kontrolü
     if (this.isExpired(url.expiresAt ?? null)) {
       await this.cache.del(cacheKey);
+      this.l1Cache.delete(cacheKey);
 
-      // url.expired event'ini async yayınla
       eventProducer
         .publish(
           createUrlExpiredEvent({
@@ -148,21 +172,20 @@ export class URLService {
       return { status: 'expired' };
     }
 
-    // 4. Kalan TTL kadar cache'e yaz
-    // Neden kalan TTL? URL'nin expiry'sinden fazla cache'de kalmasın.
+    // 6. Her iki cache'e de yaz
     const ttlSeconds = url.expiresAt
       ? Math.floor((url.expiresAt.getTime() - Date.now()) / 1000)
-      : 60 * 60; // Expiry yoksa 1 saat
+      : 60 * 60;
 
-    await this.cache.set(
-      cacheKey,
-      { originalUrl: url.originalUrl, expiresAt: url.expiresAt?.toISOString() ?? null },
-      ttlSeconds
-    );
+    const cacheValue = {
+      originalUrl: url.originalUrl,
+      expiresAt: url.expiresAt?.toISOString() ?? null,
+    };
 
-    // 5. Click sayacını async artır (fire and forget)
-    // Neden async? Redirect hızını etkilememek için. Sayaç 1-2 saniye gecikmeli
-    // güncellense de kullanıcı fark etmez.
+    await this.cache.set(cacheKey, cacheValue, ttlSeconds);
+    this.l1Cache.set(cacheKey, cacheValue);
+
+    // 7. Click sayacını async artır
     this.repository.incrementClickCount(shortCode).catch(() => {});
 
     return { status: 'found', originalUrl: url.originalUrl };
@@ -170,7 +193,10 @@ export class URLService {
 
   async deleteUrl(shortCode: string): Promise<void> {
     await this.repository.delete(shortCode);
-    await this.cache.del(this.getCacheKey(shortCode));
+    const cacheKey = this.getCacheKey(shortCode);
+    await this.cache.del(cacheKey);
+    this.l1Cache.delete(cacheKey);
+    publishCacheInvalidation(shortCode).catch(() => {});
   }
 
   async getInfo(shortCode: string): Promise<URLRecord | null> {
@@ -197,12 +223,14 @@ export class URLService {
     });
 
     if (updated) {
-      // Cache'i güncelle — eski veri kalmasın
-      await this.cache.set(
-        this.getCacheKey(shortCode),
-        { originalUrl: updated.originalUrl, expiresAt: updated.expiresAt?.toISOString() ?? null },
-        60 * 5
-      );
+      const cacheKey = this.getCacheKey(shortCode);
+      const cacheValue = {
+        originalUrl: updated.originalUrl,
+        expiresAt: updated.expiresAt?.toISOString() ?? null,
+      };
+      await this.cache.set(cacheKey, cacheValue, 60 * 5);
+      this.l1Cache.set(cacheKey, cacheValue);
+      publishCacheInvalidation(shortCode).catch(() => {});
     }
 
     return updated;

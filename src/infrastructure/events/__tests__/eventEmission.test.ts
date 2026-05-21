@@ -21,6 +21,8 @@ import {
 import { URLService } from '../../../services/urlService';
 import { URLRepository, URLRecord } from '../../../repositories/urlRepository';
 import { CacheProvider } from '../../cache/cacheProvider';
+import { LRUCache } from '../../cache/localCache';
+import { BloomFilter } from '../../cache/bloomFilter';
 
 // Minimal mock repository
 function makeMockRepo(): URLRepository {
@@ -70,7 +72,7 @@ describe('Event emission', () => {
   it('publishes url.created event when a URL is created', async () => {
     const repo = makeMockRepo();
     const cache = makeMockCache();
-    const service = new URLService(repo, cache);
+    const service = makeService(repo, cache);
 
     await service.createUrl({ url: 'https://example.com' });
 
@@ -89,7 +91,7 @@ describe('Event emission', () => {
   it('includes userId in url.created event when user is authenticated', async () => {
     const repo = makeMockRepo();
     const cache = makeMockCache();
-    const service = new URLService(repo, cache);
+    const service = makeService(repo, cache);
 
     await service.createUrl({ url: 'https://example.com', userId: 'user-42' });
 
@@ -112,7 +114,7 @@ describe('Event emission', () => {
     });
 
     const cache = makeMockCache();
-    const service = new URLService(repo, cache);
+    const service = makeService(repo, cache);
 
     const result = await service.resolveRedirect('expired1');
 
@@ -129,13 +131,6 @@ describe('Event emission', () => {
   // ── Kafka hatası redirect'i durdurmamalı ──────────────────────────────────
 
   it('does not throw when event publishing fails', async () => {
-    // Producer hata fırlatsın
-    const failingProducer: CacheProvider & EventProducerLike = {
-      get: vi.fn(),
-      set: vi.fn(),
-      del: vi.fn(),
-    };
-
     const brokenProducer = {
       publish: vi.fn().mockRejectedValue(new Error('Kafka connection failed')),
       connect: vi.fn(),
@@ -145,16 +140,25 @@ describe('Event emission', () => {
 
     const repo = makeMockRepo();
     const cache = makeMockCache();
-    const service = new URLService(repo, cache);
+    const service = makeService(repo, cache);
 
     // Hata fırlatmamalı — fire and forget
     await expect(service.createUrl({ url: 'https://example.com' })).resolves.toBeDefined();
   });
 });
 
-// TypeScript için geçici tip
-interface EventProducerLike {
-  publish: (event: any) => Promise<void>;
-  connect: () => Promise<void>;
-  disconnect: () => Promise<void>;
+// Her testte Bloom filter'ı "her şey var" diyen mock ile inject et
+function makePassthroughBloomFilter(): BloomFilter {
+  const filter = new BloomFilter(100, 0.01);
+  vi.spyOn(filter, 'mightContain').mockReturnValue(true);
+  return filter;
+}
+
+function makeService(repo: URLRepository, cache: CacheProvider): URLService {
+  return new URLService(
+    repo,
+    cache,
+    new LRUCache(100, 60_000),
+    makePassthroughBloomFilter()
+  );
 }

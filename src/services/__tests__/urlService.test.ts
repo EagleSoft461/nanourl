@@ -28,6 +28,8 @@ vi.mock('../../generators/snowflake', () => ({
 import { URLService } from '../urlService';
 import { URLRepository, URLRecord, CreateURLDTO } from '../../repositories/urlRepository';
 import { CacheProvider } from '../../infrastructure/cache/cacheProvider';
+import { LRUCache } from '../../infrastructure/cache/localCache';
+import { BloomFilter } from '../../infrastructure/cache/bloomFilter';
 
 // Test için minimal mock repository
 function makeMockRepository(): URLRepository {
@@ -36,6 +38,8 @@ function makeMockRepository(): URLRepository {
     findByShortCode: vi.fn(),
     incrementClickCount: vi.fn(),
     delete: vi.fn(),
+    update: vi.fn(),
+    list: vi.fn(),
   };
 }
 
@@ -48,6 +52,18 @@ function makeMockCache(): CacheProvider {
   };
 }
 
+// Bloom filter mock — her şeyi "var" sayar, DB'ye gitmeyi engellemesin
+function makePassthroughBloomFilter(): BloomFilter {
+  const filter = new BloomFilter(100, 0.01);
+  vi.spyOn(filter, 'mightContain').mockReturnValue(true);
+  return filter;
+}
+
+// L1 cache mock — boş başlar, test izolasyonu için
+function makeEmptyL1Cache() {
+  return new LRUCache<{ originalUrl: string; expiresAt: string | null }>(100, 60_000);
+}
+
 describe('URLService', () => {
   let service: URLService;
   let mockRepo: ReturnType<typeof makeMockRepository>;
@@ -57,7 +73,9 @@ describe('URLService', () => {
     vi.clearAllMocks();
     mockRepo = makeMockRepository();
     mockCache = makeMockCache();
-    service = new URLService(mockRepo, mockCache);
+    service = new URLService(mockRepo, mockCache, makeEmptyL1Cache(), makePassthroughBloomFilter());
+    vi.mocked(mockCache.set).mockResolvedValue(undefined);
+    vi.mocked(mockCache.del).mockResolvedValue(undefined);
   });
 
   it('returns not_found when a short code does not exist', async () => {

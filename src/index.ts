@@ -20,6 +20,9 @@ import { requireAuth } from './api/middleware/auth';
 import { registerRateLimit } from './api/middleware/rateLimiter';
 import { registerRequestId } from './api/middleware/requestId';
 import { checkHealth } from './config/database';
+import { warmCache, startCacheInvalidationListener, stopCacheInvalidationListener } from './infrastructure/cache/cacheWarming';
+import { urlL1Cache } from './infrastructure/cache/localCache';
+import { urlBloomFilter } from './infrastructure/cache/bloomFilter';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
@@ -40,6 +43,23 @@ export function buildApp() {
   app.get('/health', async (_, reply) => {
     const health = await checkHealth();
     return reply.send({ status: 'ok', ...health });
+  });
+
+  // ── Cache metrics — L1 hit rate, Bloom filter durumu ─────────────────────
+  // Ne öğreniyoruz: Cache ne kadar işe yarıyor?
+  // Hit rate düşükse TTL veya kapasite ayarlanır.
+  app.get('/metrics/cache', async (_, reply) => {
+    const l1Metrics = urlL1Cache.getMetrics();
+    return reply.send({
+      l1: {
+        ...l1Metrics,
+        hitRate: (l1Metrics.hitRate * 100).toFixed(2) + '%',
+      },
+      bloomFilter: {
+        itemCount: urlBloomFilter.count,
+        falsePositiveRate: (urlBloomFilter.falsePositiveRate * 100).toFixed(4) + '%',
+      },
+    });
   });
 
   // ── Auth endpoint'leri ───────────────────────────────────────────────────
@@ -78,10 +98,27 @@ async function start() {
   try {
     await app.listen({ port: PORT, host: '0.0.0.0' });
     console.log('Server running on http://localhost:' + PORT);
+
+    // Cache warming — en çok tıklanan URL'leri Redis'e yükle
+    await warmCache();
+
+    // Redis pub/sub — diğer node'lardan invalidation mesajlarını dinle
+    startCacheInvalidationListener();
   } catch (err) {
     app.log.error(err);
     process.exit(1);
   }
+
+  // Graceful shutdown
+  const shutdown = async (signal: string) => {
+    console.log(`Received ${signal}, shutting down...`);
+    await stopCacheInvalidationListener();
+    await app.close();
+    process.exit(0);
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
 if (require.main === module) {

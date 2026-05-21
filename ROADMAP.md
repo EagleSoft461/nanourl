@@ -114,15 +114,15 @@ Build NanoURL from a clean MVP into a reliable, production-ready service in smal
 
 ---
 
-## Phase 6 — Performance Optimization
+## Phase 6 — Performance Optimization ✅ (Complete)
 
 **Goal:** Implement the cache hierarchy and Bloom filter defined in the architecture ADRs.
 
-- [ ] `src/infrastructure/localCache.ts` — L1 in-process LRU cache (10K entries, 5 min TTL)
-- [ ] Bloom filter implementation (1B capacity, 0.01% false positive rate)
-- [ ] Cache warming — load top 10K URLs into Redis on startup
-- [ ] L1 cache invalidation via Redis pub/sub (cross-node)
-- [ ] Cache layer metrics (hit rate, miss rate)
+- [x] `src/infrastructure/cache/localCache.ts` — L1 in-process LRU cache (10K entries, 5 min TTL)
+- [x] Bloom filter implementation (1M capacity, 0.01% false positive rate)
+- [x] Cache warming — load top 10K URLs into Redis on startup
+- [x] L1 cache invalidation via Redis pub/sub (cross-node)
+- [x] Cache layer metrics (hit rate, miss rate) — `/metrics/cache` endpoint
 - [ ] Verify P99 < 10ms target on the redirect path
 - [ ] Benchmark / load test script (`tests/benchmark/`)
 
@@ -175,6 +175,6 @@ Use this file as the shared project compass. When a task is completed, mark it c
 | Phase 3 — API v1 Completeness | ✅ Largely complete | — |
 | Phase 4 — Security and Accounts | ✅ Largely complete | — |
 | Phase 5 — Analytics Pipeline | ✅ Complete | — |
-| Phase 6 — Performance Optimization | ⏳ Pending | 2–3 days |
+| Phase 6 — Performance Optimization | ✅ Largely complete | — |
 | Phase 7 — Operational Readiness | ⏳ Pending | 2–3 days |
 | Phase 8 — Database Sharding | ⏳ Advanced | 5–7 days |
