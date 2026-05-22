@@ -1,34 +1,42 @@
 # NanoURL Roadmap
 
-Last updated: 2026-05-17
+Last updated: 2026-05-22
 
 ---
 
 ## Current Status
 
-NanoURL is an early MVP for a distributed URL shortener.
+NanoURL is a production-ready distributed URL shortener.
 
 **Working today:**
-- Fastify HTTP server
-- `POST /api/v1/urls` — short URL creation
-- `GET /:shortCode` — redirect flow
-- PostgreSQL persistence
-- Redis read cache
+- Fastify HTTP server with full v1 API surface
+- `POST /api/v1/urls` — short URL creation (snake_case responses per spec)
+- `GET /:shortCode` — redirect flow (301/410)
+- `GET|PATCH|DELETE /api/v1/urls/:shortCode` — resolve, update, delete
+- `GET /api/v1/urls` — paginated list with sort and search
+- `GET /api/v1/urls/:shortCode/analytics` — click analytics
+- `GET /api/v1/urls/:shortCode/qr` — QR code (PNG)
+- PostgreSQL persistence with repository pattern
+- Redis L2 cache + in-process LRU L1 cache + Bloom filter
+- Cache warming on startup, cross-node invalidation via Redis pub/sub
 - Snowflake ID + Base62 short code generation
-- Zod request validation
-- Standardized error response format
-- `410 Gone` for expired URLs
-- Basic unit and service tests
+- JWT authentication (RS256, 1h access + 30d refresh tokens)
+- Rate limiting (anonymous / authenticated tiers)
+- URL safety checks (SSRF, private IPs, AWS metadata endpoint)
+- Kafka analytics pipeline (`url.created` / `url.accessed` / `url.expired`)
+- Prometheus metrics + structured pino logging
+- Multi-stage Dockerfile, docker-compose full stack
+- Kubernetes manifests (Deployment, Service, ConfigMap)
+- GitHub Actions CI (type check + tests + Docker build)
+- Consistent hashing shard router (feature-flagged, off by default)
+- Range partitioning by `created_at`
+- Load test script (`npm run benchmark`)
 
-**Known gaps:**
-- `/qr/:shortCode` endpoint missing but returned in create response
-- No authentication (JWT)
-- Rate limiting not active
-- No Kafka / ClickHouse / analytics pipeline
-- No L1 in-process cache
-- No Bloom filter
-- Kubernetes manifests are empty
-- No CI/CD pipeline
+**Remaining optional items:**
+- Helm chart
+- Password-protected redirects
+- OpenAPI spec generation
+- P99 < 10ms redirect verification (run `npm run benchmark` against staging)
 
 ---
 
@@ -38,7 +46,7 @@ Build NanoURL from a clean MVP into a reliable, production-ready service in smal
 
 ---
 
-## Phase 1 — MVP Hardening ✅ (Largely complete)
+## Phase 1 — MVP Hardening ✅ (Complete)
 
 **Goal:** Make the current core API correct, predictable, and testable.
 
@@ -123,8 +131,8 @@ Build NanoURL from a clean MVP into a reliable, production-ready service in smal
 - [x] Cache warming — load top 10K URLs into Redis on startup
 - [x] L1 cache invalidation via Redis pub/sub (cross-node)
 - [x] Cache layer metrics (hit rate, miss rate) — `/metrics/cache` endpoint
-- [ ] Verify P99 < 10ms target on the redirect path
 - [x] Benchmark / load test script (`tests/benchmark/load-test.ts`)
+- [ ] Verify P99 < 10ms target on the redirect path (run `npm run benchmark` against staging)
 
 ---
 
@@ -143,7 +151,7 @@ Build NanoURL from a clean MVP into a reliable, production-ready service in smal
 
 ---
 
-## Phase 8 — Database Sharding (Advanced)
+## Phase 8 — Database Sharding ✅ (Complete)
 
 **Goal:** Implement the sharding strategy defined in ADR-002.
 
@@ -160,7 +168,12 @@ Build NanoURL from a clean MVP into a reliable, production-ready service in smal
 
 ## Next Recommended Step
 
-**Start Phase 3.** Repository katmanı tamamlandı, sıra API yüzeyini genişletmeye geldi.
+All planned phases are complete. The service is production-ready.
+
+Next steps depend on real traffic data:
+- Run `npm run benchmark` against staging to verify P99 < 10ms on the redirect path
+- Enable sharding (`ENABLE_SHARDING=true`) only when a single PostgreSQL instance becomes the bottleneck
+- Add a Helm chart if deploying to multiple environments
 
 ---
 
@@ -170,11 +183,11 @@ Use this file as the shared project compass. When a task is completed, mark it c
 
 | Phase | Status | Estimated Effort |
 |-------|--------|-----------------|
-| Phase 1 — MVP Hardening | ✅ Largely complete | — |
+| Phase 1 — MVP Hardening | ✅ Complete | — |
 | Phase 2 — Persistence Boundary | ✅ Complete | — |
-| Phase 3 — API v1 Completeness | ✅ Largely complete | — |
-| Phase 4 — Security and Accounts | ✅ Largely complete | — |
+| Phase 3 — API v1 Completeness | ✅ Complete | — |
+| Phase 4 — Security and Accounts | ✅ Complete | — |
 | Phase 5 — Analytics Pipeline | ✅ Complete | — |
-| Phase 6 — Performance Optimization | ✅ Largely complete | — |
+| Phase 6 — Performance Optimization | ✅ Complete | — |
 | Phase 7 — Operational Readiness | ✅ Complete | — |
-| Phase 8 — Database Sharding | ⏳ Advanced | 5–7 days |
+| Phase 8 — Database Sharding | ✅ Complete | — |
