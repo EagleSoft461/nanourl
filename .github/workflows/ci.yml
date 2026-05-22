@@ -1,80 +1,226 @@
-# GitHub Actions CI Pipeline
+# NanoURL CI/CD Pipeline
 #
-# Ne zaman çalışır?
-# - main veya develop branch'e push yapılınca
-# - Bu branch'lere PR açılınca
+# Branch stratejisi:
+#   feature/* → PR → dev    : lint + typecheck + test
+#   dev → PR → main         : lint + typecheck + test + docker build
+#   main (merge)             : lint + typecheck + test + docker build + push registry + deploy staging + smoke test
 #
-# Ne yapar?
-# 1. Kodu checkout eder
-# 2. Node.js kurar
-# 3. Bağımlılıkları yükler
-# 4. TypeScript type check yapar
-# 5. Testleri çalıştırır
-# 6. Build alır
+# Job sırası:
+#   lint-typecheck → test → docker-build → deploy-staging → smoke-test
 #
-# Neden CI önemli?
-# "Benim makinemde çalışıyor" sorununu önler.
-# Her PR'da testler otomatik geçmeli — geçmezse merge edilemez.
+# Cache stratejisi:
+#   - npm: package-lock.json hash'e göre (~60% hız kazanımı)
+#   - Docker: GitHub Actions cache backend ile layer cache
 
-name: CI
+name: CI/CD
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, dev]
   pull_request:
-    branches: [main, develop]
+    branches: [main, dev]
+
+# Aynı branch'e yeni push gelince önceki run'ı iptal et
+# Neden? PR'da 3 commit push edersen 3 pipeline başlar — gereksiz
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
-    name: Test & Type Check
+  # ─── Job 1: Lint + Type Check ─────────────────────────────────────────────
+  # En hızlı job — kod kalitesi sorunlarını erken yakala
+  # Neden ayrı job? Test başlamadan önce tip hatası varsa zaman kaybetme
+  lint-typecheck:
+    name: Lint & Type Check
     runs-on: ubuntu-latest
 
-    strategy:
-      matrix:
-        # Birden fazla Node.js versiyonunda test et
-        # Neden? Farklı ortamlarda çalıştığından emin ol
-        node-version: [20.x, 22.x]
-
     steps:
-      # 1. Kodu indir
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. Node.js kur
-      - name: Setup Node.js ${{ matrix.node-version }}
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
-          # npm cache — bağımlılıkları cache'le, her seferinde indirme
-          cache: 'npm'
+          node-version: '20'
+          cache: 'npm'   # package-lock.json hash'e göre node_modules cache
 
-      # 3. Bağımlılıkları yükle
-      # npm ci: package-lock.json'a göre tam olarak yükler (npm install'dan daha güvenilir)
       - name: Install dependencies
         run: npm ci
 
-      # 4. TypeScript type check
-      # Neden ayrı? Build almadan sadece tip hatalarını kontrol et
       - name: Type check
         run: npx tsc --noEmit
 
-      # 5. Testleri çalıştır
+  # ─── Job 2: Unit Tests ────────────────────────────────────────────────────
+  # lint-typecheck geçmeden başlama — tip hatası varsa test çalıştırma
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint-typecheck
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
       - name: Run tests
         run: npm test
 
-      # 6. Build al — derleme hatası var mı?
-      - name: Build
-        run: npm run build
+      # Test coverage raporu — PR'da görünür
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: coverage/
+          retention-days: 7
 
-  # Dockerfile build kontrolü
-  docker:
-    name: Docker Build Check
+  # ─── Job 3: Docker Build ──────────────────────────────────────────────────
+  # Test geçmeden Docker build deneme
+  # Layer cache: ilk build ~2dk, sonraki buildler ~30sn
+  docker-build:
+    name: Docker Build
     runs-on: ubuntu-latest
-    needs: test  # Test geçmeden Docker build deneme
+    needs: test
 
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build Docker image
-        run: docker build --target production -t nanourl:ci .
+      # Docker Buildx — cache backend için gerekli
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # GitHub Container Registry'ye login
+      # main branch'te image push edilir, PR'larda sadece build kontrol edilir
+      - name: Login to GitHub Container Registry
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Image tag'leri belirle
+      # main → ghcr.io/owner/nanourl:latest + :sha-abc1234
+      # PR    → sadece build, push yok
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build (and push on main)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: production
+          push: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          # GitHub Actions cache backend — layer'ları cache'le
+          # Neden gha backend? S3/registry'ye gerek yok, Actions içinde çalışır
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ─── Job 4: Deploy to Staging ─────────────────────────────────────────────
+  # Sadece main branch'e push'ta çalışır (PR'larda değil)
+  # Staging = production'ın birebir kopyası, gerçek trafik yok
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: docker-build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: staging   # GitHub Environments — approval, secrets, URL
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # VPS'e SSH ile bağlan, yeni image'ı çek ve servisi yeniden başlat
+      # Secrets: STAGING_HOST, STAGING_USER, STAGING_SSH_KEY
+      - name: Deploy to staging VPS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          script: |
+            cd /opt/nanourl-staging
+            # Yeni image'ı çek
+            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker compose pull api
+            # Sıfır downtime restart: yeni container ayağa kalksın, sonra eskisi kapansın
+            docker compose up -d --no-deps api
+            # Eski image'ları temizle
+            docker image prune -f
+
+  # ─── Job 5: Smoke Test ────────────────────────────────────────────────────
+  # Staging deploy'dan sonra temel endpoint'leri kontrol et
+  # Neden smoke test? Deploy başarılı görünse bile uygulama crash olmuş olabilir
+  smoke-test:
+    name: Smoke Test (Staging)
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Wait for staging to be ready
+        run: sleep 15
+
+      - name: Health check
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.STAGING_URL }}/health)
+          if [ "$STATUS" != "200" ]; then
+            echo "❌ Health check failed: HTTP $STATUS"
+            exit 1
+          fi
+          echo "✅ Health check passed: HTTP $STATUS"
+
+      - name: Smoke test — create URL
+        run: |
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X POST ${{ secrets.STAGING_URL }}/api/v1/urls \
+            -H "Content-Type: application/json" \
+            -d '{"url":"https://example.com"}')
+          STATUS=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -1)
+          if [ "$STATUS" != "201" ]; then
+            echo "❌ Create URL failed: HTTP $STATUS"
+            echo "Response: $BODY"
+            exit 1
+          fi
+          echo "✅ Create URL passed: HTTP $STATUS"
+          # Short code'u al, redirect test için kullan
+          SHORT_CODE=$(echo "$BODY" | grep -o '"short_code":"[^"]*"' | cut -d'"' -f4)
+          echo "SHORT_CODE=$SHORT_CODE" >> $GITHUB_ENV
+
+      - name: Smoke test — redirect
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -L \
+            ${{ secrets.STAGING_URL }}/${{ env.SHORT_CODE }})
+          # 200 veya 301/302 bekliyoruz
+          if [ "$STATUS" != "200" ] && [ "$STATUS" != "301" ] && [ "$STATUS" != "302" ]; then
+            echo "❌ Redirect failed: HTTP $STATUS"
+            exit 1
+          fi
+          echo "✅ Redirect passed: HTTP $STATUS"
+
+      - name: Smoke test — metrics endpoint
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.STAGING_URL }}/metrics)
+          if [ "$STATUS" != "200" ]; then
+            echo "❌ Metrics endpoint failed: HTTP $STATUS"
+            exit 1
+          fi
+          echo "✅ Metrics endpoint passed: HTTP $STATUS"

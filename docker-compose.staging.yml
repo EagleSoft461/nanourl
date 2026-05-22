@@ -1,0 +1,154 @@
+# Staging ortamı — VPS'te çalışır
+#
+# Farklar (docker-compose.yml'den):
+#   - api: build yok, registry'den hazır image çeker
+#   - Tüm secret'lar .env.staging dosyasından gelir (repo'da yok, VPS'te var)
+#   - Nginx reverse proxy eklendi (SSL termination + rate limit)
+#   - Kafka/Zookeeper dahil — production ile birebir aynı stack
+#
+# VPS'te ilk kurulum:
+#   mkdir -p /opt/nanourl-staging
+#   cp docker-compose.staging.yml /opt/nanourl-staging/docker-compose.yml
+#   cp .env.staging /opt/nanourl-staging/.env
+#   docker compose up -d
+#
+# Güncelleme (CI tarafından otomatik yapılır):
+#   docker compose pull api
+#   docker compose up -d --no-deps api
+
+version: '3.8'
+
+networks:
+  nanourl-staging:
+    driver: bridge
+
+services:
+
+  # ── Nginx reverse proxy ────────────────────────────────────────────────────
+  # SSL termination, rate limiting, static file serving
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.staging.conf:/etc/nginx/conf.d/default.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro   # Certbot SSL sertifikaları
+    depends_on:
+      - api
+    networks:
+      - nanourl-staging
+    restart: unless-stopped
+
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_staging_data:/var/lib/postgresql/data
+    networks:
+      - nanourl-staging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_staging_data:/data
+    networks:
+      - nanourl-staging
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Zookeeper ─────────────────────────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - nanourl-staging
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Kafka ──────────────────────────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - nanourl-staging
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # ── NanoURL API ────────────────────────────────────────────────────────────
+  # Build yok — registry'den hazır image çeker
+  # Image tag: ghcr.io/owner/nanourl:latest (CI tarafından push edilir)
+  api:
+    image: ${API_IMAGE:-ghcr.io/eaglesoft461/nanourl:latest}
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      KAFKA_BROKERS: kafka:29092
+      BASE_URL: ${STAGING_URL}
+      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY}
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY}
+      LOG_LEVEL: info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - nanourl-staging
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  postgres_staging_data:
+  redis_staging_data:
