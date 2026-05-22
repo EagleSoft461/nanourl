@@ -1,8 +1,14 @@
 ﻿# NanoURL
 
 [![CI/CD](https://github.com/EagleSoft461/nanourl/actions/workflows/ci.yml/badge.svg)](https://github.com/EagleSoft461/nanourl/actions/workflows/ci.yml)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue?logo=typescript&logoColor=white)](https://typescriptlang.org)
-[![Node](https://img.shields.io/badge/Node.js-20-green?logo=node.js&logoColor=white)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.3-3178C6?logo=typescript&logoColor=white)](https://typescriptlang.org)
+[![Node](https://img.shields.io/badge/Node.js-20-339933?logo=node.js&logoColor=white)](https://nodejs.org)
+[![Fastify](https://img.shields.io/badge/Fastify-4-000000?logo=fastify&logoColor=white)](https://fastify.dev)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-4169E1?logo=postgresql&logoColor=white)](https://postgresql.org)
+[![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white)](https://redis.io)
+[![Kafka](https://img.shields.io/badge/Kafka-KafkaJS-231F20?logo=apachekafka&logoColor=white)](https://kafka.apache.org)
+[![Docker](https://img.shields.io/badge/Docker-multi--stage-2496ED?logo=docker&logoColor=white)](https://docker.com)
+[![Tests](https://img.shields.io/badge/tests-93%20passing-brightgreen?logo=vitest&logoColor=white)](https://vitest.dev)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 A production-ready, distributed URL shortener built for high throughput. Handles redirect resolution through a 3-layer cache hierarchy targeting P99 < 10ms.
