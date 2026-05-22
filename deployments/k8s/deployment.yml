@@ -1,0 +1,105 @@
+# Kubernetes Deployment
+#
+# Ne yapar?
+# NanoURL API'nin kaç pod çalışacağını ve nasıl güncelleneceğini tanımlar.
+#
+# Temel kavramlar:
+#   Pod: En küçük K8s birimi — bir veya birkaç container
+#   Deployment: Pod'ları yönetir (kaç tane, nasıl güncellenir)
+#   ReplicaSet: Deployment'ın oluşturduğu pod kopyaları
+#
+# Rolling Update nedir?
+# Yeni versiyon deploy edilirken eski pod'lar birer birer kapatılır,
+# yeni pod'lar birer birer açılır. Downtime olmaz.
+# maxSurge: aynı anda kaç ekstra pod açılabilir
+# maxUnavailable: aynı anda kaç pod kapalı olabilir
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nanourl-api
+  namespace: default
+  labels:
+    app: nanourl-api
+    version: "1.0"
+spec:
+  replicas: 3  # 3 pod — yük dağıtımı ve yüksek erişilebilirlik
+  selector:
+    matchLabels:
+      app: nanourl-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1        # Deploy sırasında max 1 ekstra pod
+      maxUnavailable: 0  # Deploy sırasında hiç pod kapatılmasın (zero downtime)
+  template:
+    metadata:
+      labels:
+        app: nanourl-api
+    spec:
+      containers:
+        - name: api
+          image: nanourl:latest
+          ports:
+            - containerPort: 3000
+          # Environment değişkenleri ConfigMap ve Secret'tan gelir
+          envFrom:
+            - configMapRef:
+                name: nanourl-config
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nanourl-secrets
+                  key: postgres-password
+            - name: JWT_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nanourl-secrets
+                  key: jwt-private-key
+            - name: JWT_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nanourl-secrets
+                  key: jwt-public-key
+          # Liveness probe: "Pod hâlâ çalışıyor mu?"
+          # Başarısız olursa K8s pod'u yeniden başlatır
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          # Readiness probe: "Pod trafik almaya hazır mı?"
+          # Başarısız olursa Service bu pod'a trafik göndermez
+          # Neden ikisi ayrı? Uygulama çalışıyor ama DB bağlantısı yok olabilir
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          # Resource limits — pod ne kadar CPU/bellek kullanabilir?
+          # Neden? Bir pod tüm node'u tüketmesin
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"    # 100 millicores = 0.1 CPU
+            limits:
+              memory: "512Mi"
+              cpu: "500m"    # 500 millicores = 0.5 CPU
+      # Pod'lar farklı node'lara dağıtılsın — bir node çökerse diğerleri çalışsın
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - nanourl-api
+                topologyKey: kubernetes.io/hostname

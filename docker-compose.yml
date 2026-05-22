@@ -1,6 +1,14 @@
 ﻿version: '3.8'
 
+# Tüm servislerin kullandığı ortak ağ
+# Neden? Servisler birbirini container adıyla bulabilsin (postgres, redis vb.)
+networks:
+  nanourl-net:
+    driver: bridge
+
 services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
   postgres:
     image: postgres:15-alpine
     environment:
@@ -11,29 +19,112 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - nanourl-net
+    # Health check — "postgres hazır mı?" kontrolü
+    # pg_isready: PostgreSQL'in bağlantı kabul edip etmediğini kontrol eder
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nanourl -d nanourl"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
+  # ── Redis ───────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
     command: redis-server --appendonly yes
+    networks:
+      - nanourl-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
+  # ── Zookeeper (Kafka için gerekli) ──────────────────────────────────────────
   zookeeper:
-    image: confluentinc/cp-zookeeper:latest
+    image: confluentinc/cp-zookeeper:7.5.0
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - nanourl-net
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
+  # ── Kafka ───────────────────────────────────────────────────────────────────
   kafka:
-    image: confluentinc/cp-kafka:latest
+    image: confluentinc/cp-kafka:7.5.0
     depends_on:
-      - zookeeper
+      zookeeper:
+        condition: service_healthy
     ports:
       - "9092:9092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      # İki listener: container içi (INTERNAL) ve dışarıdan erişim (EXTERNAL)
+      # Neden iki listener? Container içindeki servisler "kafka:29092" kullanır,
+      # host makineden bağlanmak için "localhost:9092" kullanılır
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - nanourl-net
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ── NanoURL API ─────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: nanourl
+      POSTGRES_PASSWORD: secret123
+      POSTGRES_DB: nanourl
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BROKERS: kafka:29092
+      BASE_URL: http://localhost:3000
+      # JWT key'leri production'da gerçek değerlerle değiştirilmeli
+      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY:-dev-secret-not-for-production}
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:-dev-secret-not-for-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - nanourl-net
+    # Uygulama health check
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    # Container çökerse otomatik yeniden başlat
+    restart: unless-stopped
 
 volumes:
   postgres_data:

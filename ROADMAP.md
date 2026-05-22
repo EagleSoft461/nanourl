@@ -128,17 +128,17 @@ Build NanoURL from a clean MVP into a reliable, production-ready service in smal
 
 ---
 
-## Phase 7 — Operational Readiness
+## Phase 7 — Operational Readiness ✅ (Complete)
 
 **Goal:** Make the app easy to run, observe, and deploy.
 
-- [ ] `Dockerfile` (multi-stage build)
-- [ ] `docker-compose.yml` — clean startup of all local dependencies (PG, Redis, Kafka)
-- [ ] Health checks for API, PostgreSQL, and Redis
-- [ ] GitHub Actions CI workflow (tests + type check)
-- [ ] Prometheus metrics endpoint (`/metrics`)
-- [ ] Basic observability: structured logs, latency counters
-- [ ] Kubernetes manifests (after runtime shape is stable)
+- [x] `Dockerfile` (multi-stage build, non-root user, health check)
+- [x] `docker-compose.yml` — full stack with health checks and depends_on
+- [x] Health checks for API, PostgreSQL, and Redis
+- [x] GitHub Actions CI workflow (tests + type check + Docker build)
+- [x] Prometheus metrics endpoint (`/metrics`) with HTTP latency histograms
+- [x] Structured logging via Fastify pino (JSON in production, pretty in dev)
+- [x] Kubernetes manifests — Deployment, Service, ConfigMap, Secret
 - [ ] Helm chart (optional, after K8s manifests)
 
 ---
@@ -176,5 +176,5 @@ Use this file as the shared project compass. When a task is completed, mark it c
 | Phase 4 — Security and Accounts | ✅ Largely complete | — |
 | Phase 5 — Analytics Pipeline | ✅ Complete | — |
 | Phase 6 — Performance Optimization | ✅ Largely complete | — |
-| Phase 7 — Operational Readiness | ⏳ Pending | 2–3 days |
+| Phase 7 — Operational Readiness | ✅ Complete | — |
 | Phase 8 — Database Sharding | ⏳ Advanced | 5–7 days |

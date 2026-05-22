@@ -1,0 +1,80 @@
+# GitHub Actions CI Pipeline
+#
+# Ne zaman çalışır?
+# - main veya develop branch'e push yapılınca
+# - Bu branch'lere PR açılınca
+#
+# Ne yapar?
+# 1. Kodu checkout eder
+# 2. Node.js kurar
+# 3. Bağımlılıkları yükler
+# 4. TypeScript type check yapar
+# 5. Testleri çalıştırır
+# 6. Build alır
+#
+# Neden CI önemli?
+# "Benim makinemde çalışıyor" sorununu önler.
+# Her PR'da testler otomatik geçmeli — geçmezse merge edilemez.
+
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  test:
+    name: Test & Type Check
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        # Birden fazla Node.js versiyonunda test et
+        # Neden? Farklı ortamlarda çalıştığından emin ol
+        node-version: [20.x, 22.x]
+
+    steps:
+      # 1. Kodu indir
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Node.js kur
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          # npm cache — bağımlılıkları cache'le, her seferinde indirme
+          cache: 'npm'
+
+      # 3. Bağımlılıkları yükle
+      # npm ci: package-lock.json'a göre tam olarak yükler (npm install'dan daha güvenilir)
+      - name: Install dependencies
+        run: npm ci
+
+      # 4. TypeScript type check
+      # Neden ayrı? Build almadan sadece tip hatalarını kontrol et
+      - name: Type check
+        run: npx tsc --noEmit
+
+      # 5. Testleri çalıştır
+      - name: Run tests
+        run: npm test
+
+      # 6. Build al — derleme hatası var mı?
+      - name: Build
+        run: npm run build
+
+  # Dockerfile build kontrolü
+  docker:
+    name: Docker Build Check
+    runs-on: ubuntu-latest
+    needs: test  # Test geçmeden Docker build deneme
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build --target production -t nanourl:ci .

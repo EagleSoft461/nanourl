@@ -1,0 +1,34 @@
+# Kubernetes Service
+#
+# Ne yapar?
+# Pod'lara erişim sağlar. Pod'lar gelip gider (restart, scale),
+# Service sabit bir IP/DNS sağlar.
+#
+# Service tipleri:
+#   ClusterIP: Sadece cluster içinden erişim (varsayılan)
+#   NodePort: Node'un portunu dışarıya açar
+#   LoadBalancer: Cloud provider'ın load balancer'ını kullanır (AWS ELB vb.)
+#
+# Burada LoadBalancer kullanıyoruz — production'da AWS/GCP/Azure LB oluşturur
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: nanourl-api
+  namespace: default
+  labels:
+    app: nanourl-api
+  annotations:
+    # Prometheus bu annotation'ı görünce /metrics endpoint'ini scrape eder
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "3000"
+    prometheus.io/path: "/metrics"
+spec:
+  type: LoadBalancer
+  selector:
+    app: nanourl-api  # Bu label'a sahip pod'lara yönlendir
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80        # Dışarıdan gelen port
+      targetPort: 3000 # Pod'un dinlediği port

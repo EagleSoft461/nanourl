@@ -23,15 +23,29 @@ import { checkHealth } from './config/database';
 import { warmCache, startCacheInvalidationListener, stopCacheInvalidationListener } from './infrastructure/cache/cacheWarming';
 import { urlL1Cache } from './infrastructure/cache/localCache';
 import { urlBloomFilter } from './infrastructure/cache/bloomFilter';
+import { registry, registerMetrics } from './infrastructure/metrics/prometheus';
+import { getLoggerConfig } from './config/logger';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
 export function buildApp() {
-  const app = Fastify({ logger: process.env.NODE_ENV !== 'test' });
+  const app = Fastify({
+    logger: getLoggerConfig(),
+    // Request ID'yi Fastify'ın kendi ID üreticisi yerine bizimkini kullan
+    genReqId: () => {
+      const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+      let id = 'req_';
+      for (let i = 0; i < 8; i++) id += chars[Math.floor(Math.random() * chars.length)];
+      return id;
+    },
+  });
 
   // ── Middleware ────────────────────────────────────────────────────────────
   // Request ID — her isteğe benzersiz ID atar, X-Request-ID header'ı ekler
   registerRequestId(app);
+
+  // Prometheus metrics — her isteği ölç
+  registerMetrics(app);
 
   // Rate limiting — Redis'te sayaç tutar, limit aşılınca 429 döner
   // Test ortamında devre dışı — testler rate limit'e takılmasın
@@ -42,24 +56,26 @@ export function buildApp() {
   // ── Sağlık kontrolü ──────────────────────────────────────────────────────
   app.get('/health', async (_, reply) => {
     const health = await checkHealth();
-    return reply.send({ status: 'ok', ...health });
-  });
-
-  // ── Cache metrics — L1 hit rate, Bloom filter durumu ─────────────────────
-  // Ne öğreniyoruz: Cache ne kadar işe yarıyor?
-  // Hit rate düşükse TTL veya kapasite ayarlanır.
-  app.get('/metrics/cache', async (_, reply) => {
     const l1Metrics = urlL1Cache.getMetrics();
     return reply.send({
-      l1: {
-        ...l1Metrics,
-        hitRate: (l1Metrics.hitRate * 100).toFixed(2) + '%',
-      },
-      bloomFilter: {
-        itemCount: urlBloomFilter.count,
-        falsePositiveRate: (urlBloomFilter.falsePositiveRate * 100).toFixed(4) + '%',
+      status: 'ok',
+      ...health,
+      cache: {
+        l1Size: l1Metrics.size,
+        l1HitRate: (l1Metrics.hitRate * 100).toFixed(1) + '%',
+        bloomFilterItems: urlBloomFilter.count,
       },
     });
+  });
+
+  // ── Prometheus metrics endpoint ───────────────────────────────────────────
+  // Prometheus bu endpoint'i scrape eder (çeker)
+  // Format: metric_name{label="value"} sayı
+  app.get('/metrics', async (_, reply) => {
+    const metrics = await registry.metrics();
+    return reply
+      .type(registry.contentType)
+      .send(metrics);
   });
 
   // ── Auth endpoint'leri ───────────────────────────────────────────────────
