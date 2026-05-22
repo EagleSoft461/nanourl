@@ -61,8 +61,10 @@ describe('URL routes', () => {
       utmSource: undefined,
     });
     expect(response.json()).toMatchObject({
-      shortCode: 'custom1',
-      originalUrl: 'https://example.com',
+      data: {
+        short_code: 'custom1',
+        original_url: 'https://example.com',
+      },
     });
   });
 

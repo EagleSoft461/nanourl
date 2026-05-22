@@ -51,7 +51,7 @@ Build NanoURL from a clean MVP into a reliable, production-ready service in smal
 - [x] Fastify integration tests for create and redirect flows
 - [x] Service tests for expiry, custom aliases, and cache fallback
 - [x] Add `.env.example`
-- [ ] Align response field naming with API spec (camelCase vs snake_case)
+- [x] Align response field naming with API spec (snake_case throughout)
 
 ---
 
@@ -124,7 +124,7 @@ Build NanoURL from a clean MVP into a reliable, production-ready service in smal
 - [x] L1 cache invalidation via Redis pub/sub (cross-node)
 - [x] Cache layer metrics (hit rate, miss rate) — `/metrics/cache` endpoint
 - [ ] Verify P99 < 10ms target on the redirect path
-- [ ] Benchmark / load test script (`tests/benchmark/`)
+- [x] Benchmark / load test script (`tests/benchmark/load-test.ts`)
 
 ---
 
@@ -149,12 +149,12 @@ Build NanoURL from a clean MVP into a reliable, production-ready service in smal
 
 > ⚠️ This phase should only be tackled when real traffic scale demands it. Premature sharding adds significant operational complexity.
 
-- [ ] Consistent hashing ring implementation
-- [ ] Shard routing layer (based on first 2 characters of short code)
-- [ ] 64 virtual shards → PostgreSQL instance mapping
-- [ ] Range partitioning by `created_at`
-- [ ] Shard rebalancing procedure documentation
-- [ ] Cross-shard query strategy (for user-scoped listing)
+- [x] Consistent hashing ring implementation
+- [x] Shard routing layer (based on first 2 characters of short code)
+- [x] 64 virtual shards → PostgreSQL instance mapping
+- [x] Range partitioning by `created_at`
+- [x] Shard rebalancing procedure documentation (`docs/runbook-shard-rebalancing.md`)
+- [x] Cross-shard query strategy (fan-out via `Promise.all`, documented in runbook)
 
 ---
 

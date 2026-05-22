@@ -42,7 +42,18 @@ export async function createUrlHandler(
       ...parsed.data,
       userId: request.user?.id,
     });
-    return reply.status(201).send(result);
+
+    // API spec snake_case response gerektiriyor (ADR-001)
+    return reply.status(201).send({
+      data: {
+        short_code: result.shortCode,
+        short_url: result.shortUrl,
+        original_url: result.originalUrl,
+        created_at: result.createdAt,
+        expires_at: result.expiresAt,
+        qr_code_url: result.qrCode,
+      },
+    });
   } catch (error) {
     if (error instanceof Error && error.message === 'Custom alias already taken') {
       return reply.status(409).send(apiError('CONFLICT', error.message));

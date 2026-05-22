@@ -52,7 +52,7 @@ describe('NanoURL Integration Tests', () => {
 
       expect(response.status).toBe(201);
       expect(response.body).toBeDefined();
-      expect(response.body.shortCode).toBe('abc123');
+      expect(response.body.data.short_code).toBe('abc123');
     });
   });
 
