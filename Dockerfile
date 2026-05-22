@@ -12,8 +12,10 @@ COPY package*.json ./
 RUN npm ci --include=dev
 
 # Kaynak kodu kopyala ve derle
+# scripts ve tests de tsconfig.json'da include edildiği için kopyalanmalı
 COPY tsconfig.json ./
 COPY src ./src
+COPY scripts ./scripts
 RUN npm run build
 
 # ─── Aşama 2: Production ─────────────────────────────────────────────────────
