@@ -95,7 +95,7 @@ describe('Event emission', () => {
 
     await service.createUrl({ url: 'https://example.com', userId: 'user-42' });
 
-    const events = producer.getEvents('url.created');
+    const events = producer.getEvents<import('../../../infrastructure/events/eventSchema').UrlCreatedEvent>('url.created');
     expect(events[0].userId).toBe('user-42');
   });
 
